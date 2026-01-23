@@ -119,7 +119,7 @@ openai_api_key берётся на сайте openai https://platform.openai.com
 * /set_channel_mapping - Установить соответствие между каналами
 * /last_messages (ко-во сообщений или all, если все) - Отправить последние сообщения с каналов
 
-Сайт: http://mygrab.ru/
+Сайт: [http://mygrab.ru/](https://mygrab.ru/?utm_source=github)
 
 # Если хотите поддержать проект
 
