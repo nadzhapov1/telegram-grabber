@@ -1,3 +1,4 @@
-pip install aiogram==2.25.1
-pip install telethon
-pip install httpx
+aiogram==2.25.1
+telethon
+httpx
+python-dotenv
