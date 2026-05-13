@@ -138,7 +138,25 @@ async def start(m):
 
 if __name__ == "__main__":
     async def main():
+        # 1. Загружаем данные
         load_data()
+        
+        # 2. Подключаем Telethon
         await client.start()
-        await dp.start_polling()
+        logger.info("Client запущен")
+        
+        # 3. ПРИНУДИТЕЛЬНО СБРАСЫВАЕМ ВСЕ СТАРЫЕ СЕССИИ TELEGRAM
+        # Это самое важное: мы говорим Telegram удалить все старые Webhook-и 
+        # и разрешения на получение обновлений, которые могли зависнуть.
+        await bot.delete_webhook(drop_pending_updates=True)
+        logger.info("Webhook сброшен, начинаю polling...")
+        
+        try:
+            # 4. Запускаем бота
+            await dp.start_polling()
+        except Exception as e:
+            logger.error(f"Ошибка в polling: {e}")
+        finally:
+            await client.disconnect()
+
     asyncio.run(main())
