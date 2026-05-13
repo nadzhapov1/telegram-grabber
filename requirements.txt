@@ -1,4 +1,4 @@
-aiogram==2.25.1
 telethon
-httpx
+aiogram==2.25.1
 python-dotenv
+aiohttp
