@@ -5,6 +5,9 @@ import re
 import pickle
 from dotenv import load_dotenv
 
+# Для работы порта на Render
+from aiohttp import web
+
 # Telethon
 from telethon import TelegramClient, events
 from telethon.sessions import StringSession
@@ -26,15 +29,30 @@ MY_ID = int(os.getenv('MY_ID', 0))
 TECHNICAL_CHANNEL_ID = int(os.getenv('TECHNICAL_CHANNEL_ID', 0))
 STRING_SESSION = os.getenv('TELEGRAM_SESSION', '')
 
-# Настройки замены (можешь поменять на свои)
-NEW_LINK = "https://t.me/your_channel"
-NEW_USERNAME = "@your_admin"
+# Настройки замены
+NEW_LINK = "https://t.me/your_channel"  # Замени на свою ссылку
+NEW_USERNAME = "@your_admin"           # Замени на свой юзернейм
 
-# Инициализация
+# Инициализация логирования
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Используем StringSession для облачного запуска
+# --- ВЕБ-СЕРВЕР ДЛЯ RENDER (ОБМАНКА ПОРТА) ---
+async def handle(request):
+    return web.Response(text="Bot is alive!")
+
+async def start_web_server():
+    app = web.Application()
+    app.router.add_get('/', handle)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    # Render передает порт в переменную окружения PORT
+    port = int(os.getenv("PORT", 10000))
+    site = web.TCPSite(runner, '0.0.0.0', port)
+    await site.start()
+    logger.info(f"Веб-сервер запущен на порту {port}")
+
+# --- ИНИЦИАЛИЗАЦИЯ ТЕЛЕГРАМ ---
 client = TelegramClient(StringSession(STRING_SESSION), API_ID, API_HASH, system_version="4.16.30-vxMAX")
 bot = Bot(token=BOT_TOKEN)
 storage = MemoryStorage()
@@ -43,7 +61,7 @@ dp = Dispatcher(bot, storage=storage)
 class ChannelAdding(StatesGroup):
     waiting_for_channel_id = State()
 
-# --- Работа с базой данных (файлы) ---
+# --- РАБОТА С ДАННЫМИ ---
 def load_data(filename):
     if os.path.exists(filename):
         try:
@@ -58,73 +76,69 @@ def save_data():
     with open('channels.pickle', 'wb') as f: pickle.dump(channels, f)
     with open('channel_mapping.pickle', 'wb') as f: pickle.dump(channel_mapping, f)
 
-# --- Функции очистки текста ---
 def clean_text(text):
     if not text: return ""
-    # Замена ссылок в формате Markdown [текст](ссылка)
-    text = re.sub(r'\[([^\]]+)\]\(http[s]?://[^\)]+\)', f'[\\1]({NEW_LINK})', text)
-    # Замена обычных ссылок http/https
     text = re.sub(r'http[s]?://t\.me/[^\s]+', NEW_LINK, text)
-    # Замена упоминаний @username
     text = re.sub(r'@\w+', NEW_USERNAME, text)
     return text
 
-# --- Логика Граббера (Telethon) ---
+# --- ОБРАБОТЧИК СООБЩЕНИЙ (ГРАББЕР) ---
 @client.on(events.NewMessage)
 async def message_handler(event):
     chat_id = event.chat_id
-    
-    # Проверяем, есть ли этот канал в нашем списке прослушки
     if chat_id in channels:
         dest_id = channel_mapping.get(chat_id)
         if not dest_id: return
-
         text = clean_text(event.message.text)
-        
         try:
             if event.message.media:
                 await client.send_file(dest_id, event.message.media, caption=text)
             else:
                 await client.send_message(dest_id, text)
-            logger.info(f"Сообщение из {chat_id} переслано в {dest_id}")
         except Exception as e:
             logger.error(f"Ошибка пересылки: {e}")
 
-# --- Логика Управления (Aiogram) ---
+# --- АДМИН-КОМАНДЫ (AIOGRAM) ---
 @dp.message_handler(commands=['start'])
 async def cmd_start(message: types.Message):
     if message.from_user.id != MY_ID: return
     kb = InlineKeyboardMarkup().add(InlineKeyboardButton("Добавить канал", callback_data="add"))
-    await message.answer("Бот-граббер работает на Render.\nИспользуйте кнопку для настройки:", reply_markup=kb)
+    await message.answer("Бот-граббер активен. Нажмите кнопку для настройки:", reply_markup=kb)
 
 @dp.callback_query_handler(text="add")
 async def add_callback(call: types.CallbackQuery):
-    await call.message.answer("Пришлите ID канала, который нужно слушать:")
+    await call.message.answer("Введите ID канала для прослушивания:")
     await ChannelAdding.waiting_for_channel_id.set()
 
 @dp.message_handler(state=ChannelAdding.waiting_for_channel_id)
 async def process_id(message: types.Message, state: FSMContext):
     try:
         source_id = int(message.text)
-        # Здесь можно добавить логику привязки к целевому каналу
         channels[source_id] = True
         save_data()
-        await message.answer(f"Канал {source_id} добавлен в список прослушки!")
+        await message.answer(f"Канал {source_id} добавлен!")
     except:
-        await message.answer("Ошибка! Введите числовой ID.")
+        await message.answer("ID должен быть числом.")
     await state.finish()
 
-# --- Главный цикл ---
+# --- ЗАПУСК ВСЕГО ВМЕСТЕ ---
 async def main():
-    logger.info("Запуск сессии Telethon...")
+    # 1. Запускаем веб-сервер, чтобы Render не убил процесс
+    await start_web_server()
+    
+    # 2. Запускаем клиент Telethon
+    logger.info("Подключение к сессии Telethon...")
     await client.start()
     
-    logger.info("Запуск бота Aiogram...")
+    # 3. Запускаем бота Aiogram
+    logger.info("Запуск Aiogram Polling...")
     try:
-        # Запускаем и Telethon и Aiogram вместе
         await dp.start_polling()
     finally:
         await client.disconnect()
 
 if __name__ == '__main__':
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except (KeyboardInterrupt, SystemExit):
+        logger.info("Бот остановлен пользователем")
